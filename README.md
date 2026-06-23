@@ -6,75 +6,81 @@ neighborhood, season, and keyword, with live registration prices and direct sign
 Seattle Parks registers through ActiveCommunities, whose search API is POST-only and
 returns a large, noisy payload. This repo is two things that live together:
 
-- **`worker/`** — a small Cloudflare Worker that shims the POST-only catalog into clean
-  GET endpoints (filtered, slimmed, CORS-on). Deployed at
-  `https://seattle-activities.coryking.workers.dev`.
-- **`plugin/`** — a Claude Code plugin whose skill teaches a model how to use those
-  endpoints. This repo is also its own plugin marketplace.
+- **`worker/`** — a Cloudflare Worker that exposes the POST-only catalog as a remote
+  **MCP server** (Model Context Protocol over Streamable HTTP at `/mcp`). MCP clients reach
+  it server-side, so there's no code-execution egress allowlist to configure. Endpoint:
+  `https://seattle-activities.coryking.workers.dev/mcp`.
+- **`plugin/`** — a Claude Code plugin whose skill adds workflow + presentation guidance on
+  top of those MCP tools. This repo is also its own plugin marketplace.
 
 ## Install
 
-The skill is one portable `SKILL.md`, so it works on every surface that supports Agent
-Skills. Pick yours:
+Two parts: the **MCP connector** (the worker — provides the tools) and the optional
+**skill** (workflow + presentation guidance). Connect the first everywhere; add the second
+where you want richer behavior.
+
+### claude.ai (web + desktop)
+
+**Settings → Connectors → Add custom connector**, and paste the MCP URL:
+
+```
+https://seattle-activities.coryking.workers.dev/mcp
+```
+
+That's all you need to search — Claude calls the connector's tools directly. Then ask, e.g.
+*"find Seattle Parks summer camps for a 7-year-old near Ballard."*
+
+Optional skill: **Settings → Capabilities → enable Code execution**, then **Customize →
+Plugins → "Personal" → "+" → Add marketplace** → `https://github.com/coryking/seattle-parks`
+→ install **seattle-parks**. (Or upload the standalone skill: download `seattle-parks.zip`
+from the [latest release](https://github.com/coryking/seattle-parks/releases/latest) and use
+**Customize → Skills → Upload a skill**.)
 
 ### Claude Code
 
 ```
+# the MCP connector (the tools)
+claude mcp add --transport http seattle-activities https://seattle-activities.coryking.workers.dev/mcp
+
+# the skill (optional guidance), from this repo's marketplace
 /plugin marketplace add coryking/seattle-parks
 /plugin install seattle-parks@coryking
 ```
 
-Then just ask, e.g. *"find Seattle Parks summer camps for a 7-year-old near Ballard."*
-Update later with `/plugin marketplace update coryking`.
+Update the skill later with `/plugin marketplace update coryking`.
 
-### claude.ai (web + desktop)
+## The MCP server directly
 
-claude.ai can add this repo as a marketplace directly — same as Claude Code:
-
-1. **Settings → Capabilities → enable Code execution** (required before plugins appear).
-2. **Customize → Plugins → "Personal" → "+" → Add marketplace** and paste the repo URL:
-   `https://github.com/coryking/seattle-parks`
-3. Install the **seattle-parks** plugin from the marketplace.
-
-> Prefer a standalone skill instead of the plugin? Download `seattle-parks.zip` from the
-> [latest release](https://github.com/coryking/seattle-parks/releases/latest) and use
-> **Customize → Skills → Upload a skill**.
-
-### ChatGPT
-
-Skills use the same open Agent Skills standard. Add `plugin/skills/seattle-parks/SKILL.md`
-as a skill (currently the Business/Enterprise/Edu beta).
-
-## The API directly
+The worker speaks MCP over Streamable HTTP at `/mcp` — point any MCP client at it, or poke
+it with the inspector:
 
 ```
-# Search (age-filtered, open spots only, no swim by default)
-curl 'https://seattle-activities.coryking.workers.dev/?covers=8,9'
-
-# Price for a specific activity (resident fee; fetch on-demand, not in bulk)
-curl 'https://seattle-activities.coryking.workers.dev/price?ids=84263'
-
-# Full parameter reference
-curl 'https://seattle-activities.coryking.workers.dev/help'
+npx @modelcontextprotocol/inspector
+# Transport: Streamable HTTP   URL: https://seattle-activities.coryking.workers.dev/mcp
 ```
 
-See `plugin/skills/seattle-parks/SKILL.md` for the full parameter list and field
-semantics.
+Tools: `search_activities` (filter by age, neighborhood, season, keyword, category) and
+`get_activity_prices` (resident fee for specific activity ids — on-demand, not in bulk).
+Parameter docs live in the tool descriptions; `plugin/skills/seattle-parks/SKILL.md` carries
+the workflow and field semantics.
 
 ## Develop / deploy the worker
 
 Deploys run in CI: pushing changes under `worker/**` to `main` triggers
-[`.github/workflows/deploy-worker.yml`](.github/workflows/deploy-worker.yml), which
-deploys to `*.workers.dev` via `cloudflare/wrangler-action`. It needs a
-`CLOUDFLARE_API_TOKEN` repo secret (Workers Scripts → Edit); `account_id` lives in
-`worker/wrangler.toml`. You can also run it by hand from the Actions tab
+[`.github/workflows/deploy-worker.yml`](.github/workflows/deploy-worker.yml), which runs
+`npm ci` and deploys to `*.workers.dev` via `cloudflare/wrangler-action`. It needs a
+`CLOUDFLARE_API_TOKEN` repo secret (Workers Scripts → Edit) and the `CLOUDFLARE_ACCOUNT_ID`
+repo variable. The deployed `serverInfo.version` is auto-stamped from the `package.json`
+base plus the CI run number and commit. You can also run it by hand from the Actions tab
 (workflow_dispatch).
 
 For a local check without deploying:
 
 ```
 cd worker
-npx wrangler deploy --dry-run   # bundle + validate
+npm ci
+npx wrangler dev               # run locally; POST MCP to http://127.0.0.1:8787/mcp
+npx wrangler deploy --dry-run  # bundle + validate
 ```
 
 ## License
