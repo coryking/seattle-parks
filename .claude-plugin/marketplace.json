@@ -1,0 +1,14 @@
+{
+  "name": "seattle-parks",
+  "owner": {
+    "name": "Cory King",
+    "email": "me@coryk.ing"
+  },
+  "plugins": [
+    {
+      "name": "seattle-parks",
+      "source": "./plugin",
+      "description": "Find Seattle Parks & Rec activities — camps, classes, lessons, drop-ins — by age, neighborhood, season, and keyword, with live registration prices and direct sign-up links."
+    }
+  ]
+}
