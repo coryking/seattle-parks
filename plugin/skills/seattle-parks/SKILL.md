@@ -20,9 +20,12 @@ You are the search interface — the user supplies the intent. Don't assume who 
    **age**, roughly **where in Seattle** (or which rec centers), the **season**, and any
    interest (sports, art, swim, etc.).
 2. **Search** with the `/` endpoint, translating their answer into query params.
-3. **Hand back a shortlist** grouped sensibly (e.g. camps / classes / drop-ins), each with
-   its ages, schedule, location, and a link to its page (see *Opening an activity* below).
+3. **Hand back a shortlist** grouped sensibly (e.g. camps / classes / drop-ins), each
+   rendered as a card (see *Presenting results* below).
 4. **Only then fetch prices** for the few they're actually weighing — see the guardrail.
+
+**Always hide full activities.** Keep `exclude_full` at its default (`true`) — never show
+activities with no open spots unless the user explicitly asks to see full ones too.
 
 ## 1. Search activities
 
@@ -79,6 +82,24 @@ e.g. `id` 86074 → `https://anc.apm.activecommunities.com/seattle/activity/sear
 
 That page has full details and the register button. The JSON also gives `enroll_url`
 (jumps straight into enrollment) and `detail_url` (an alternate link to the same page).
+
+## Presenting results (card format)
+
+Render each activity as a short card. **The activity name is always a clickable link to
+its Seattle Parks page** (the `detail/<id>` URL above) — never show a bare, unlinked name.
+
+```
+### [<Activity Name>](https://anc.apm.activecommunities.com/seattle/activity/search/detail/<id>?onlineSiteId=0&from_original_cui=true)
+**Ages** <ages> · **When** <days> <time>, <dates> · **Where** <location>
+**Spots** <open_spots> open  ·  **Price** <price, only if you fetched it>
+<one-line summary from description>
+```
+
+Notes:
+- For drop-ins (`open_spots: -1`), show "drop-in" instead of a spot count.
+- Only show **Price** once you've fetched it for that activity — don't imply a price you
+  don't have.
+- Keep the description to a sentence; link out for the rest.
 
 ## Rec-center site IDs
 
