@@ -1,0 +1,21 @@
+name: Deploy worker
+
+# Deploys worker/ to *.workers.dev (seattle-activities.coryking.workers.dev).
+# Auth: CLOUDFLARE_API_TOKEN repo secret (Workers Scripts -> Edit). Account ID
+# is non-secret and lives in worker/wrangler.toml. See coryking/home-it-services#77.
+
+on:
+  push:
+    branches: [main]
+    paths: ['worker/**']
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: worker
