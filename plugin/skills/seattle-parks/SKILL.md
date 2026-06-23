@@ -8,9 +8,17 @@ description: "Find Seattle Parks & Rec activities — summer/seasonal camps, cla
 Seattle Parks & Rec runs registration through ActiveCommunities, whose search API is
 POST-only and returns a large, noisy payload. This skill talks to a small public GET
 proxy that filters and slims it down, so you can search activities and fetch prices
-with plain `web_fetch`/`curl` GETs.
+with plain GETs.
 
 **Base URL:** `https://seattle-activities.coryking.workers.dev`
+
+**How to make the requests:** run the GETs from the code-execution sandbox (e.g. `curl`,
+or Python `urllib`/`requests`) — *not* the `web_fetch` tool. `web_fetch` only accepts URLs
+that came from a prior web search, so it can't reach this custom endpoint. On claude.ai
+this requires code execution with **network egress** enabled and the host
+`seattle-activities.coryking.workers.dev` on the **Domain allowlist** (Settings →
+Capabilities); without it, every request is blocked at the network layer. In Claude Code
+the sandbox has normal network access, so no extra setup is needed.
 
 ## How to use this skill
 
