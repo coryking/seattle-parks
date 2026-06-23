@@ -22,7 +22,8 @@ You are the search interface — the user supplies the intent. Don't assume who 
 2. **Search** with the `/` endpoint, translating their answer into query params.
 3. **Hand back a shortlist** grouped sensibly (e.g. camps / classes / drop-ins), each
    rendered as a card (see *Presenting results* below).
-4. **Only then fetch prices** for the few they're actually weighing — see the guardrail.
+4. **Don't fetch prices.** Leave price off the cards. Only look up a price when the user
+   explicitly asks about a specific activity — see the guardrail.
 
 **Always hide full activities.** Keep `exclude_full` at its default (`true`) — never show
 activities with no open spots unless the user explicitly asks to see full ones too.
@@ -64,11 +65,12 @@ GET /price?ids=84263,85421,83719
 Returns `{ count, prices: [ { id, free, price } ] }` — `price` is the **resident**
 registration fee as a string (e.g. `"$250.00"`); `free: true` means no charge.
 
-> **Guardrail — do not over-fetch prices.** Prices are deliberately *not* in the search
-> results. The proxy makes **one upstream request per id**, and it runs on a platform with
-> a per-request subrequest limit. Only call `/price` for the handful the user is seriously
-> considering — **a shortlist of roughly ≤10 ids in one call**, never the whole result set.
-> If they want "everything," price the top few and offer to price more on request.
+> **Guardrail — prices are on-demand only; never auto-populate them.** Each id is a
+> separate upstream call on a small free-tier worker, so do **not** price search results,
+> shortlists, or whole lists in the background. Only call `/price` when the user explicitly
+> asks what a *specific* activity costs, and fetch just that id (or the few they name).
+> Surface it as a follow-up offer — "want the price on any of these?" — rather than
+> fetching prices yourself.
 
 ## Opening / signing up for an activity
 
