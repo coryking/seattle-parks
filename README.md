@@ -29,12 +29,16 @@ Update later with `/plugin marketplace update seattle-parks`.
 
 ### claude.ai (web + desktop)
 
-1. **Settings → Capabilities → enable Code execution** (required before skills appear).
-2. Get the skill zip — download `seattle-parks.zip` from the
-   [latest release](https://github.com/coryking/seattle-parks/releases/latest), or build it
-   yourself: `cd plugin/skills && zip -r seattle-parks.zip seattle-parks` (the zip's root
-   must be the `seattle-parks/` folder containing `SKILL.md`).
-3. **Customize → Skills → "+" → Upload a skill** and pick the zip.
+claude.ai can add this repo as a marketplace directly — same as Claude Code:
+
+1. **Settings → Capabilities → enable Code execution** (required before plugins appear).
+2. **Customize → Plugins → "Personal" → "+" → Add marketplace** and paste the repo URL:
+   `https://github.com/coryking/seattle-parks`
+3. Install the **seattle-parks** plugin from the marketplace.
+
+> Prefer a standalone skill instead of the plugin? Download `seattle-parks.zip` from the
+> [latest release](https://github.com/coryking/seattle-parks/releases/latest) and use
+> **Customize → Skills → Upload a skill**.
 
 ### ChatGPT
 
