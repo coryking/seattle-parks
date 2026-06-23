@@ -1,8 +1,9 @@
 name: Deploy worker
 
 # Deploys worker/ to *.workers.dev (seattle-activities.coryking.workers.dev).
-# Auth: CLOUDFLARE_API_TOKEN repo secret (Workers Scripts -> Edit). Account ID
-# is non-secret and lives in worker/wrangler.toml. See coryking/home-it-services#77.
+# Auth: CLOUDFLARE_API_TOKEN repo secret (Workers Scripts -> Edit). Account ID is
+# non-secret and comes from the repo variable CLOUDFLARE_ACCOUNT_ID. See
+# coryking/home-it-services#77.
 
 on:
   push:
@@ -15,7 +16,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+        working-directory: worker
+      # Stamp the deployed build onto the base semver in package.json (ephemeral,
+      # not committed). serverInfo.version then always reflects what's live, with
+      # no hand-bumping for routine deploys. esbuild inlines it via the import.
+      - name: Stamp build version
+        working-directory: worker
+        run: |
+          base=$(node -p "require('./package.json').version.split('+')[0]")
+          npm pkg set "version=${base}+ci.${{ github.run_number }}.${GITHUB_SHA::7}"
+          node -p "'stamped version: ' + require('./package.json').version"
       - uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

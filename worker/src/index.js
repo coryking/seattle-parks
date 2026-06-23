@@ -1,17 +1,24 @@
 /**
- * Seattle Parks activity-search GET shim.
+ * Seattle Parks activity finder — remote MCP server.
  *
  * Seattle Parks & Rec runs on ActiveCommunities, whose activity-search endpoint
- * is POST-only. A claude.ai chat (and anything else that can only issue GETs)
- * can't talk to it. This Worker accepts a GET, translates the query string into
- * the upstream POST body, paginates, filters server-side, and returns clean JSON
- * with permissive CORS.
+ * is POST-only and returns a large, noisy payload. This Worker exposes that
+ * catalog as a Model Context Protocol server (Streamable HTTP) so any MCP client
+ * — claude.ai Connectors, Claude Code, etc. — can search activities and look up
+ * prices as tool calls, reached server-side (no code-execution egress allowlist).
+ *
+ * This is an MCP server ONLY — there is no REST/GET API. The single endpoint is
+ * POST /mcp. Two tools: search_activities, get_activity_prices.
  *
  * Upstream (POST):
  *   https://anc.apm.activecommunities.com/seattle/rest/activities/list?locale=en-US
- *
  * No auth, no cookies, no CSRF token are needed upstream — it's a public catalog.
  */
+
+import { createMcpHandler } from "agents/mcp";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { version as VERSION } from "../package.json";
 
 const UPSTREAM =
   "https://anc.apm.activecommunities.com/seattle/rest/activities/list?locale=en-US";
@@ -19,7 +26,7 @@ const PER_PAGE = 50; // upstream page size; fewer round-trips than the site's 20
 const MAX_PAGES = 40; // safety stop
 
 // Default to the central-Seattle cluster near First Hill (98101).
-// Override with ?sites=8,29,...  Discover IDs from filters.sites in any response.
+// Override with the `sites` arg. Discover IDs from any Seattle Parks search URL.
 const DEFAULT_SITES = [
   "434", // Washington Park Arboretum
   "16", // Medgar Evers Pool
@@ -35,110 +42,167 @@ const DEFAULT_SITES = [
 ];
 const DEFAULT_SEASON = "51"; // Summer 2026 (52=Fall 2026, 53=School Year 2026-27)
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "*",
-};
+// ---------------------------------------------------------------------------
+// MCP server
+// ---------------------------------------------------------------------------
+
+const SERVER_INSTRUCTIONS = `Search Seattle Parks & Rec (ActiveCommunities) program registrations: camps, classes, lessons, and drop-ins.
+
+Workflow:
+- Call search_activities to discover/compare programs. It returns everything EXCEPT price (left out to stay fast).
+- Call get_activity_prices ONLY when the user asks what specific activities cost — pass just the id(s) they care about, never bulk-price a whole result set.
+
+Field semantics in search results:
+- open_spots: number of open registration spots; -1 = uncapped drop-in, 0 = full.
+- age band is [age_min_year, age_max_year) — age_max_year is EXCLUSIVE.
+- each activity carries detail_url (info page) and enroll_url (sign-up).
+
+Covers Seattle Parks & Rec only — not other cities, school districts, or private programs.`;
+
+function createServer() {
+  const server = new McpServer(
+    { name: "seattle-activities", version: VERSION },
+    { instructions: SERVER_INSTRUCTIONS }
+  );
+
+  server.registerTool(
+    "search_activities",
+    {
+      title: "Search Seattle Parks activities",
+      description:
+        "Search live Seattle Parks & Rec activity registrations (camps, classes, lessons, drop-ins) from the ActiveCommunities catalog, filtered by neighborhood, season, age, keyword, and category. Use when someone wants to discover or compare Seattle Parks programs. Returns matching activities WITHOUT prices — call get_activity_prices for those. Seattle Parks only.",
+      inputSchema: {
+        keyword: z
+          .string()
+          .optional()
+          .describe("Free-text search over activity titles/descriptions, e.g. 'lego', 'soccer', 'pottery'."),
+        covers: z
+          .array(z.number().int())
+          .optional()
+          .describe(
+            "Ages (in years) the activity must actually serve; keeps an activity if its age band covers ANY listed age, e.g. [8,9] for an 8- or 9-year-old. This is the precise age filter — prefer it over min_age/max_age."
+          ),
+        season: z
+          .string()
+          .optional()
+          .describe("Season ID: 51=Summer 2026, 52=Fall 2026, 53=School Year 2026-27. Defaults to 51 (Summer 2026)."),
+        sites: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "ActiveCommunities site (location) IDs to search. Defaults to a central-Seattle cluster (Capitol Hill / Central District / First Hill / International District). Only set when the user names specific rec centers and you know their IDs."
+          ),
+        categories: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Category IDs: 22=Camps, 23=Performing Arts, 26=Visual/Crafts, 27=Athletics, 34=Martial Arts, 35=Nature, 38=Enrichment."
+          ),
+        min_age: z
+          .number()
+          .int()
+          .optional()
+          .describe("Upstream minimum-age gate (years). Coarser than covers; prefer covers for precise matching."),
+        max_age: z
+          .number()
+          .int()
+          .optional()
+          .describe("Upstream maximum-age gate (years). Coarser than covers; prefer covers for precise matching."),
+        days: z
+          .string()
+          .optional()
+          .describe("7-char day-of-week bitmask, Sunday-first (SMTWTFS), '1'=include. Default '0000000' = any day."),
+        exclude_full: z
+          .boolean()
+          .optional()
+          .describe("Drop activities with 0 open spots. Default true."),
+        no_swim: z
+          .boolean()
+          .optional()
+          .describe("Drop pool/swim/dive activities. Default true."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      const result = await searchActivities(makeOpts(args));
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.registerTool(
+    "get_activity_prices",
+    {
+      title: "Get Seattle Parks registration prices",
+      description:
+        "Fetch the live resident registration price for one or more activities by id. Use ONLY when the user asks what specific activities cost — prices are intentionally excluded from search_activities to keep it fast. Pass just the id(s) the user is interested in; do not bulk-price an entire search. Returns the resident fee as a string (e.g. \"$250.00\"); free=true means no charge.",
+      inputSchema: {
+        ids: z
+          .array(z.number().int())
+          .min(1)
+          .max(100)
+          .describe("Activity ids (the `id` field from search_activities results). 1–100 per call."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ ids }) => {
+      const result = await getPrices(ids);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    }
+  );
+
+  return server;
+}
+
+// A fresh server per request (MCP SDK >=1.26 requirement — avoids cross-client
+// response leaks in a stateless handler).
+function mcp(request, env, ctx) {
+  return createMcpHandler(createServer())(request, env, ctx);
+}
 
 export default {
-  async fetch(request) {
-    if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS });
-    }
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const pretty = url.searchParams.has("pretty");
-    if (url.searchParams.has("help") || url.pathname === "/help") {
-      return json(usage(), 200, true);
+    if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
+      return mcp(request, env, ctx);
     }
-
-    // Second endpoint: live registration prices for one or many activity IDs.
-    //   /price?id=84263        or   /price?ids=84263,85421,83719
-    if (url.pathname === "/price" || url.pathname === "/prices") {
-      const ids = [
-        ...(url.searchParams.get("id") ? [url.searchParams.get("id")] : []),
-        ...(url.searchParams.get("ids") || "")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      ];
-      if (!ids.length) {
-        return json({ error: "pass ?id=<activityId> or ?ids=84263,85421,..." }, 400, true);
-      }
-      if (ids.length > 100) {
-        return json({ error: "max 100 ids per request" }, 400, true);
-      }
-      try {
-        const prices = await Promise.all(ids.map(fetchPrice));
-        return json({ count: prices.length, prices }, 200, pretty);
-      } catch (err) {
-        return json({ error: String(err && err.message ? err.message : err) }, 502);
-      }
-    }
-
-    try {
-      const opts = parseQuery(url.searchParams);
-      const items = await fetchAll(opts);
-      const activities = items
-        .map(shape)
-        .filter((a) => keep(a, opts))
-        .sort(
-          (a, b) =>
-            a.location.localeCompare(b.location) || a.name.localeCompare(b.name)
-        );
-      return json(
-        {
-          source: "Seattle Parks & Rec (ActiveCommunities), live",
-          generated_at: new Date().toISOString(),
-          query: opts.echo,
-          count: activities.length,
-          activities,
-        },
-        200,
-        pretty
-      );
-    } catch (err) {
-      return json({ error: String(err && err.message ? err.message : err) }, 502);
-    }
+    // 100% MCP — no REST API. Point humans (and health checks) at the endpoint.
+    const info = {
+      service: "seattle-activities",
+      protocol: "Model Context Protocol (Streamable HTTP)",
+      endpoint: "/mcp",
+      tools: ["search_activities", "get_activity_prices"],
+      repo: "https://github.com/coryking/seattle-parks",
+    };
+    return new Response(JSON.stringify(info, null, 2), {
+      status: url.pathname === "/" ? 200 : 404,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
   },
 };
 
-function parseQuery(p) {
-  const list = (v) =>
-    (v || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  const num = (v) => (v === null || v === "" ? null : Number(v));
+// ---------------------------------------------------------------------------
+// Core logic (shared by both tools; same proxy behavior as the old GET shim)
+// ---------------------------------------------------------------------------
 
-  const sites = list(p.get("sites"));
-  const season = p.get("season") || DEFAULT_SEASON;
-  const minAge = num(p.get("min_age"));
-  const maxAge = num(p.get("max_age"));
-  const keyword = p.get("keyword") || "";
-  const categories = list(p.get("categories"));
-  const days = p.get("days") || "0000000";
-
-  // Precise post-filters (defaults match what we actually want for a kid search)
-  const covers = list(p.get("covers")).map(Number).filter((n) => !Number.isNaN(n));
-  const excludeFull = p.get("exclude_full") !== "false";
-  const noSwim = p.get("no_swim") !== "false";
+function makeOpts(a = {}) {
+  const sites = a.sites && a.sites.length ? a.sites.map(String) : DEFAULT_SITES;
+  const season = a.season || DEFAULT_SEASON;
+  const minAge = a.min_age ?? null;
+  const maxAge = a.max_age ?? null;
+  const keyword = a.keyword || "";
+  const categories = a.categories ? a.categories.map(String) : [];
+  const days = a.days || "0000000";
+  const covers = (a.covers || []).map(Number).filter((n) => !Number.isNaN(n));
+  const excludeFull = a.exclude_full !== false; // default true
+  const noSwim = a.no_swim !== false; // default true
 
   return {
-    upstream: {
-      sites: sites.length ? sites : DEFAULT_SITES,
-      season,
-      minAge,
-      maxAge,
-      keyword,
-      categories,
-      days,
-    },
+    upstream: { sites, season, minAge, maxAge, keyword, categories, days },
     covers,
     excludeFull,
     noSwim,
     echo: {
-      sites: sites.length ? sites : DEFAULT_SITES,
+      sites,
       season,
       min_age: minAge,
       max_age: maxAge,
@@ -149,6 +213,29 @@ function parseQuery(p) {
       no_swim: noSwim,
     },
   };
+}
+
+async function searchActivities(opts) {
+  const items = await fetchAll(opts);
+  const activities = items
+    .map(shape)
+    .filter((a) => keep(a, opts))
+    .sort(
+      (a, b) =>
+        a.location.localeCompare(b.location) || a.name.localeCompare(b.name)
+    );
+  return {
+    source: "Seattle Parks & Rec (ActiveCommunities), live",
+    generated_at: new Date().toISOString(),
+    query: opts.echo,
+    count: activities.length,
+    activities,
+  };
+}
+
+async function getPrices(ids) {
+  const prices = await Promise.all(ids.map(fetchPrice));
+  return { count: prices.length, prices };
 }
 
 function buildBody(u) {
@@ -321,41 +408,4 @@ function decode(s) {
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function json(obj, status, pretty = false) {
-  return new Response(JSON.stringify(obj, null, pretty ? 2 : 0), {
-    status,
-    headers: { "Content-Type": "application/json; charset=utf-8", ...CORS },
-  });
-}
-
-function usage() {
-  return {
-    what: "GET shim over Seattle Parks ActiveCommunities activity search.",
-    example:
-      "/?season=51&sites=8,29,399,23,278&covers=8,9&exclude_full=true&no_swim=true",
-    params: {
-      sites: "comma-separated site IDs (default: central-Seattle cluster near First Hill)",
-      season: "season ID. 51=Summer 2026, 52=Fall 2026, 53=School Year 2026-27 (default 51)",
-      min_age: "upstream age gate (optional)",
-      max_age: "upstream age gate (optional)",
-      keyword: "free-text search (optional)",
-      categories:
-        "comma-separated category IDs: 22=Camps, 23=Performing Arts, 26=Visual/Crafts, 27=Athletics, 34=Martial Arts, 35=Nature, 38=Enrichment",
-      covers:
-        "comma-separated ages the activity must actually serve, e.g. 8,9 (keeps a band if it covers ANY). Precise client-side filter.",
-      exclude_full: "drop activities with 0 open spots (default true)",
-      no_swim: "drop pool/swim/dive activities (default true)",
-      pretty: "indent the JSON for humans (default off — compact saves ~half the tokens)",
-    },
-    price_endpoint: {
-      what: "Live resident registration price for one or many activities (a second fetch).",
-      usage: "/price?ids=84263,85421,83719  (or ?id=84263). Max 100 ids.",
-      returns:
-        "{ count, prices: [{ id, free, price }] }. price is the resident fee as a string (e.g. \"$250.00\"); free=true means no charge.",
-    },
-    notes:
-      "open_spots: -1 = uncapped drop-in, 0 = full. age_max_year is exclusive. Each activity carries detail_url + enroll_url. Prices live at /price (not in the list, to keep it fast).",
-  };
 }

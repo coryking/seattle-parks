@@ -1,4 +1,4 @@
-# Seattle Parks activity-search GET shim.
+# Seattle Parks activity finder — remote MCP server (Streamable HTTP) at /mcp.
 # Deployed to *.workers.dev (no custom domain, not wired into the OpenTofu infra).
 # See ./README.md and coryking/home-it-services#77 for the credential dependency.
 
@@ -6,9 +6,12 @@ name = "seattle-activities"
 main = "src/index.js"
 compatibility_date = "2026-06-23"
 
-# Not secret (already in infrastructure/variables.tf). wrangler also honors
-# CLOUDFLARE_ACCOUNT_ID from the env if you'd rather not hardcode it.
-account_id = "8984406411c5606d3f2d4feb5ca316ae"
+# The MCP SDK uses Node built-ins; required for the bundle to run on Workers.
+compatibility_flags = ["nodejs_compat"]
+
+# account_id is supplied via the CLOUDFLARE_ACCOUNT_ID env var (CI sets it from
+# the repo variable `vars.CLOUDFLARE_ACCOUNT_ID`; not secret — also in
+# infrastructure/variables.tf). Export it locally to deploy by hand.
 
 # Publish the *.workers.dev route.
 workers_dev = true
