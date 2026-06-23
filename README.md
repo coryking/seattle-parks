@@ -63,10 +63,18 @@ semantics.
 
 ## Develop / deploy the worker
 
+Deploys run in CI: pushing changes under `worker/**` to `main` triggers
+[`.github/workflows/deploy-worker.yml`](.github/workflows/deploy-worker.yml), which
+deploys to `*.workers.dev` via `cloudflare/wrangler-action`. It needs a
+`CLOUDFLARE_API_TOKEN` repo secret (Workers Scripts → Edit); `account_id` lives in
+`worker/wrangler.toml`. You can also run it by hand from the Actions tab
+(workflow_dispatch).
+
+For a local check without deploying:
+
 ```
 cd worker
-./deploy.sh --dry-run   # bundle + validate
-./deploy.sh             # deploy (auth via the wrangler credential shim)
+npx wrangler deploy --dry-run   # bundle + validate
 ```
 
 ## License
