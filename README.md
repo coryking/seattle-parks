@@ -21,11 +21,11 @@ Skills. Pick yours:
 
 ```
 /plugin marketplace add coryking/seattle-parks
-/plugin install seattle-parks@seattle-parks
+/plugin install seattle-parks@coryking
 ```
 
 Then just ask, e.g. *"find Seattle Parks summer camps for a 7-year-old near Ballard."*
-Update later with `/plugin marketplace update seattle-parks`.
+Update later with `/plugin marketplace update coryking`.
 
 ### claude.ai (web + desktop)
 
