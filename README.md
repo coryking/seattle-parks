@@ -12,16 +12,34 @@ returns a large, noisy payload. This repo is two things that live together:
 - **`plugin/`** — a Claude Code plugin whose skill teaches a model how to use those
   endpoints. This repo is also its own plugin marketplace.
 
-## Use the skill (Claude Code)
+## Install
+
+The skill is one portable `SKILL.md`, so it works on every surface that supports Agent
+Skills. Pick yours:
+
+### Claude Code
 
 ```
 /plugin marketplace add coryking/seattle-parks
 /plugin install seattle-parks@seattle-parks
 ```
 
-The same `plugin/skills/seattle-parks/SKILL.md` is portable: zip the `seattle-parks`
-skill folder and upload it under **Customize → Skills** in claude.ai (needs code
-execution enabled), or use it as an Agent Skill in ChatGPT — the format is shared.
+Then just ask, e.g. *"find Seattle Parks summer camps for a 7-year-old near Ballard."*
+Update later with `/plugin marketplace update seattle-parks`.
+
+### claude.ai (web + desktop)
+
+1. **Settings → Capabilities → enable Code execution** (required before skills appear).
+2. Get the skill zip — download `seattle-parks.zip` from the
+   [latest release](https://github.com/coryking/seattle-parks/releases/latest), or build it
+   yourself: `cd plugin/skills && zip -r seattle-parks.zip seattle-parks` (the zip's root
+   must be the `seattle-parks/` folder containing `SKILL.md`).
+3. **Customize → Skills → "+" → Upload a skill** and pick the zip.
+
+### ChatGPT
+
+Skills use the same open Agent Skills standard. Add `plugin/skills/seattle-parks/SKILL.md`
+as a skill (currently the Business/Enterprise/Edu beta).
 
 ## The API directly
 
@@ -29,8 +47,8 @@ execution enabled), or use it as an Agent Skill in ChatGPT — the format is sha
 # Search (age-filtered, open spots only, no swim by default)
 curl 'https://seattle-activities.coryking.workers.dev/?covers=8,9'
 
-# Prices for a shortlist (resident fee; keep batches small)
-curl 'https://seattle-activities.coryking.workers.dev/price?ids=84263,85421'
+# Price for a specific activity (resident fee; fetch on-demand, not in bulk)
+curl 'https://seattle-activities.coryking.workers.dev/price?ids=84263'
 
 # Full parameter reference
 curl 'https://seattle-activities.coryking.workers.dev/help'
