@@ -1,0 +1,6 @@
+{
+  "seattle-activities": {
+    "type": "http",
+    "url": "https://seattle-activities.coryking.workers.dev/mcp"
+  }
+}

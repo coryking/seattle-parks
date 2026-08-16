@@ -8,7 +8,7 @@
     {
       "name": "seattle-parks",
       "source": "./plugin",
-      "description": "Find Seattle Parks & Rec activities — camps, classes, lessons, drop-ins — by age, neighborhood, season, and keyword, with live registration prices and direct sign-up links."
+      "description": "Search ActiveCommunities recreation catalogs (Seattle Parks & Rec by default, ~100 other cities) — programs, drop-in sessions, registration windows, and prices — via the seattle-activities remote MCP server."
     }
   ]
 }

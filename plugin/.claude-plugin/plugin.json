@@ -1,7 +1,7 @@
 {
   "name": "seattle-parks",
-  "version": "0.2.0",
-  "description": "Find Seattle Parks & Rec activities — camps, classes, lessons, drop-ins — by age, neighborhood, season, and keyword, with live registration prices and direct sign-up links.",
+  "version": "2.0.0",
+  "description": "Search ActiveCommunities recreation catalogs (Seattle Parks & Rec by default, ~100 other cities via org) — programs, drop-in sessions, registration windows, and prices — through the seattle-activities remote MCP server.",
   "author": {
     "name": "Cory King",
     "email": "me@coryk.ing",
@@ -10,6 +10,5 @@
   "homepage": "https://github.com/coryking/seattle-parks",
   "repository": "https://github.com/coryking/seattle-parks",
   "license": "MIT",
-  "keywords": ["seattle", "parks", "recreation", "activities", "camps", "kids", "activecommunities"],
-  "skills": ["./skills/seattle-parks"]
+  "keywords": ["seattle", "parks", "recreation", "activities", "camps", "kids", "activecommunities", "mcp"]
 }

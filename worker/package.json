@@ -6,7 +6,9 @@
   "description": "Remote MCP server (Streamable HTTP) over the Seattle Parks & Rec ActiveCommunities catalog.",
   "scripts": {
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "smoke": "node ../scripts/smoke.mjs"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
@@ -15,6 +17,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "vitest": "^4.1.10",
     "wrangler": "^4"
   }
 }

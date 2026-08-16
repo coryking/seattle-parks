@@ -1,6 +1,6 @@
 name: Deploy worker
 
-# Deploys worker/ to *.workers.dev (seattle-activities.coryking.workers.dev).
+# Tests then deploys worker/ to *.workers.dev (seattle-activities.coryking.workers.dev).
 # Auth: CLOUDFLARE_API_TOKEN repo secret (Workers Scripts -> Edit). Account ID is
 # non-secret and comes from the repo variable CLOUDFLARE_ACCOUNT_ID. See
 # coryking/home-it-services#77.
@@ -8,11 +8,30 @@ name: Deploy worker
 on:
   push:
     branches: [main]
-    paths: ['worker/**']
+    paths: ['worker/**', 'scripts/**', '.github/workflows/deploy-worker.yml']
+  pull_request:
+    paths: ['worker/**', 'scripts/**', '.github/workflows/deploy-worker.yml']
   workflow_dispatch: {}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+        working-directory: worker
+      - name: Unit tests (pure synthesis functions)
+        run: npx vitest run
+        working-directory: worker
+
   deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,3 +57,7 @@ jobs:
           workingDirectory: worker
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # Golden-query smoke against the LIVE deployment (real MCP calls, real
+      # upstream). Structural invariants only — upstream data shifts daily.
+      - name: Post-deploy smoke
+        run: node scripts/smoke.mjs https://seattle-activities.coryking.workers.dev/mcp
