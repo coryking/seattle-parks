@@ -31,8 +31,20 @@ function unwrap(json, what) {
   throw new Error(`upstream ${what}: ${msg} (code ${code ?? "none"})`);
 }
 
+/** One retry on 5xx/network errors — upstream hiccups shouldn't fail a whole tool call. */
+async function fetchRetry(url, init) {
+  try {
+    const res = await fetch(url, init);
+    if (res.status < 500) return res;
+  } catch {
+    // fall through to the retry
+  }
+  await new Promise((r) => setTimeout(r, 400));
+  return fetch(url, init);
+}
+
 export async function upstreamGet(org, path, { ttl = 3600 } = {}) {
-  const res = await fetch(`${base(org)}/${path}`, {
+  const res = await fetchRetry(`${base(org)}/${path}`, {
     headers: headers(org),
     cf: { cacheTtl: ttl, cacheEverything: true },
   });
@@ -45,7 +57,7 @@ export async function upstreamGet(org, path, { ttl = 3600 } = {}) {
 }
 
 export async function upstreamPost(org, path, body, page) {
-  const res = await fetch(`${base(org)}/${path}`, {
+  const res = await fetchRetry(`${base(org)}/${path}`, {
     method: "POST",
     headers: { ...headers(org, page), "Content-Type": "application/json;charset=utf-8" },
     body: JSON.stringify(body),

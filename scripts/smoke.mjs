@@ -38,7 +38,12 @@ async function rpc(method, params) {
 async function call(tool, args) {
   const r = await rpc("tools/call", { name: tool, arguments: args });
   const text = r.content?.[0]?.text ?? "";
-  return { data: JSON.parse(text), bytes: text.length };
+  try {
+    return { data: JSON.parse(text), bytes: text.length, isError: Boolean(r.isError) };
+  } catch {
+    // A thrown tool error arrives as plain text — surface it instead of crashing.
+    return { data: { tool_error: text }, bytes: text.length, isError: true };
+  }
 }
 
 function check(label, cond, detail = "") {
@@ -48,19 +53,34 @@ function check(label, cond, detail = "") {
 }
 
 // --- handshake -------------------------------------------------------------
-const init = await rpc("initialize", {
-  protocolVersion: "2025-06-18",
-  capabilities: {},
-  clientInfo: { name: "smoke", version: "0" },
-});
-check("initialize", init?.serverInfo?.name === "seattle-activities", init?.serverInfo?.version);
-await fetch(URL_, {
-  method: "POST",
-  headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...(session ? { "mcp-session-id": session } : {}) },
-  body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-});
+// Fresh session per attempt: right after a deploy, edge POPs serve a mix of
+// old and new worker versions for a short while — wait until we land on one
+// with the current five-tool surface before asserting anything.
+async function handshake() {
+  session = null;
+  const init = await rpc("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "smoke", version: "0" },
+  });
+  await fetch(URL_, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...(session ? { "mcp-session-id": session } : {}) },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  const tools = await rpc("tools/list", {});
+  return { init, tools };
+}
 
-const tools = await rpc("tools/list", {});
+let init, tools;
+for (let attempt = 1; ; attempt++) {
+  ({ init, tools } = await handshake());
+  if (tools?.tools?.length === 5) break;
+  if (attempt >= 12) break;
+  console.log(`… waiting for deploy propagation (attempt ${attempt}: ${tools?.tools?.length ?? 0} tools, version ${init?.serverInfo?.version})`);
+  await new Promise((r) => setTimeout(r, 10_000));
+}
+check("initialize", init?.serverInfo?.name === "seattle-activities", init?.serverInfo?.version);
 check("five tools", tools?.tools?.length === 5, tools?.tools?.map((t) => t.name).join(","));
 
 // --- golden query 1: the original failing prompt ---------------------------
