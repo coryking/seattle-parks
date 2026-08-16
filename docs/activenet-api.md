@@ -310,7 +310,7 @@ Per-package detail and price.
 | `GET /public-contents/0` and `/public-contents/1` | Public content blocks |
 | `GET /customerheaderfooter/{pageId}` | Per-page header/footer content |
 | `GET /address/suggest?key={keyword}` and `/address/candidate?key={magicKey}` | Address autocomplete/geocode |
-| `GET /organization/captivate/{ios\|android}/app-info` | Mobile app info. Seattle returns `show_captivate_download_url: false` — **no mobile app** |
+| `GET /organization/captivate/{ios\|android}/app-info` | Mobile app info. Seattle returns `show_captivate_download_url: false` — see [The mobile app API](#the-mobile-app-api-captivate) |
 
 ## Not available
 
@@ -318,7 +318,8 @@ Per-package detail and price.
 - **No bulk export / no `?format=csv`.** Pagination is the only path to a full dump.
 - **No faceted counts.** Facets are plain `{id, desc}` lists. `activities/map`'s
   `item_count` is the sole count-by-group in the entire API.
-- **No mobile app** for Seattle (ActiveNet's white-label app is "Captivate").
+- **No mobile app** for Seattle. ActiveNet's white-label app ("Captivate") runs on a
+  separate API that Seattle has not licensed — see [The mobile app API](#the-mobile-app-api-captivate).
 - **Leagues module is unlicensed.** `GET /leagues/list` returns `0008 No license`. The whole
   `/leagues/*` family (standings, brackets, pairings, team schedules) exists in the platform
   but is dark for Seattle. This is a licensing gap, not an auth gap — signing in will not
@@ -354,6 +355,168 @@ like *"find kid swim lessons"*:
 
 Grouping by `name` is the closest thing to a program abstraction, and it is a worker-side
 concern.
+
+## The mobile app API (Captivate)
+
+ActiveNet's consumer mobile app is **ACTIVENet Captivate** (`com.active.link` on Google Play,
+published by ACTIVE Network, LLC). Agencies white-label it — each licensed org ships under its
+own name and icon (`com.captivate.saanich`, `com.captivate.meckparkrec`, `com.captivate.lakoswego`,
+`com.active.desertrec`, …), all built from the same codebase.
+
+**Seattle has not licensed it, so none of this is reachable for Seattle.** It is documented here
+so the question does not get re-investigated.
+
+### Is it a paid feature? Yes.
+
+Per ACTIVE's own integration docs: *"To enable integration with ACTIVE Captivate, please contact
+your Account Manager to enable the ACTIVE Captivate license."* Beyond the license, the agency must
+supply **its own Apple developer account** plus branding (app name, icon, splash screen), and
+receives credentials to a separate ACTIVE Captivate staff site. It is a per-agency licensed
+white-label product, not a flag ACTIVE flips for free.
+
+The public tell is the web API itself:
+
+```bash
+curl -s -H "X-Requested-With: XMLHttpRequest" \
+  "https://anc.apm.activecommunities.com/seattle/rest/organization/captivate/android/app-info?locale=en-US"
+# => {"body":{"app_info":{"show_captivate_download_url":false}}}
+```
+
+`false` for Seattle on both `ios` and `android` (also `false` for `sfrecpark` and `snoco`).
+A licensed org returns `true` plus a store URL. This is the same class of gap as the dark
+leagues module — a licensing gap, not an auth gap.
+
+### It is a genuinely different API surface
+
+Not a webview wrapper, and not the same endpoints. The app is native Kotlin (Retrofit/OkHttp,
+Compose, Dagger) and talks to **four** bases, none of which is the `/{tenant}/rest/` API this
+doc otherwise covers:
+
+| Base | Role |
+|---|---|
+| `https://awmobile.active.com/` | The mobile backend — everything under `/portal/*` |
+| `https://api.amp.active.com/` | The credentialed ActiveNet System API |
+| `https://anc.apm.activecommunities.com` | The web CUI, embedded in a webview for registration |
+| `https://campsself.active.com` | Camp & Class Manager self-service |
+
+Convention differences from the web API — nothing transfers:
+
+- **Auth is OAuth2**, not cookieless. `POST /authorization-server/oauth/token`, bearer token.
+  Every `/portal/*` path returns HTTP 404 (a real JSON 404, not a redirect) when called
+  unauthenticated. **There is no anonymous read surface here at all.**
+- **No tenant in the path.** The org is selected via `/portal/orgs/list` and carried in the
+  token, rather than the `/{tenant}/` path segment.
+- **Paging is `?current=&size=` query params**, not the `page_info` request header.
+- **Different envelope** — `ResultEntity` / `RecordsEntity`, not the `headers`/`body` wrapper
+  with `response_code`.
+
+### What it exposes that the web API does not
+
+The mobile-only capabilities are **engagement and social features**, not a richer catalog:
+
+| Family | Endpoints | What it is |
+|---|---|---|
+| Geo check-in | `portal/geocheckin/checkin`, `/status` | Geofenced facility check-in |
+| Challenges | `portal/challengecustomers/challenges`, `/{id}/leaderboard`, `/{id}/progress`, `/family` | Fitness challenges with leaderboards |
+| Chat | `portal/chat/room`, `/private`, `/multiuser/room`, `/openfire/info`, `/search/users`, `/rooms/{jid}/mute` | XMPP/Openfire messaging (the APK bundles Smack) |
+| Media | `portal/medias/images/registeredproduct`, `/date/{date}`, `/{uuid}/type/{mediaType}/aggregate` | Photo feeds for enrolled programs (camp photos) |
+| Notifications | `portal/notifications/{id}/list`, `/unreadcount`, `/list/banners`, `/read`, `/app/launch` | Push + in-app inbox |
+| Favorites | `portal/favorites/list/{type}`, `/v2/change`, `/facilities/order` | Saved facilities |
+| My schedule | `portal/v3/registrations/upcomingschedules`, `/v2/.../dates`, `portal/waitlist` | Account-scoped upcoming sessions and waitlist |
+
+Everything in that table is **customer-account-scoped** — it describes *your* registrations, not
+the public catalog. There is no mobile equivalent of `activities/list`, `activities/map`, or the
+drop-in calendar that returns more or better public data.
+
+### Does it offer primitives we could not get otherwise?
+
+Mostly no — but not entirely, so here is the honest ledger. "Primitive" here means a *query shape*
+or *data view* the web API structurally cannot produce, not merely a different endpoint name.
+
+**Genuinely new shapes** (all four are auth-walled, and none is public catalog data):
+
+- `GET portal/orgs/list` — a **cross-agency org registry**. The web API has no discovery
+  mechanism at all; the only way to find tenants is to guess slugs, which mostly fails. This
+  would enumerate agencies directly. Caveat: it lists *Captivate-licensed* orgs, which is a
+  subset of ActiveNet tenants — Seattle would not appear even if the call worked.
+- `GET portal/challengecustomers/{id}/leaderboard` — a **ranked aggregation**. Notable because
+  the web API has exactly one aggregation anywhere (`activities/map`'s `item_count`). It
+  aggregates challenge participants, though, not catalog entities.
+- `POST portal/v3/registrations/upcomingschedules` and `/v2/registrations/upcomingschedules/dates`
+  — a **date-indexed view of your own enrollments** ("which days do I have something?"). The web
+  equivalent lives under session-bound `/myaccount/`, so this is a different shape behind the
+  same auth wall.
+- `GET portal/medias/{uuid}/type/{mediaType}/aggregate` and
+  `portal/medias/images/registeredproduct/date/{date}` — date-bucketed media feeds. No web
+  analogue, because the web CUI has no photo feed.
+
+**Looks new, is not** — the web API already has an equal or better version:
+
+| Mobile | Web equivalent |
+|---|---|
+| `portal/products/facilities/open_status?facility_ids=` (batch status) | `POST reservation/resource/facilitiesavailability` |
+| `portal/centers?need_open_hours=true` | `onlinecalendar/centerdetails?center_ids=` (richer; per-weekday hours) |
+| `portal/products`, `portal/products/{id}` | `reservation/resource` + `simple/detail/{id}` (far richer: amenities, restrictions, fees) |
+| `portal/equipments/available`, `portal/products/reservationgroups` | `reservation/resource` with `equipment_id` / `option/filteroptions` |
+| `portal/v2/categories`, `portal/categories/paging`, `portal/groups` | facet block returned free with every `activities/list` call |
+
+**Unverified.** `GET portal/paymentmanagers/catalog/tree` is the one endpoint whose name hints at
+something the web API genuinely lacks — a **hierarchical catalog**, against a platform whose
+taxonomy is otherwise flat facets (see [On "programs"](#on-programs-grouping-activities-across-datesfacilities)).
+It sits under `paymentmanagers`, so it is far more likely a GL/payment-category tree than a
+program taxonomy. It cannot be called without a Captivate token, so this stays a guess.
+
+**Net:** the mobile API is a different surface, but it is not a *richer* one for public data. It
+trades catalog depth for engagement features. Every genuinely new primitive is either
+account-scoped, Captivate-licensed, or both — and the one structural capability worth envying
+(org discovery) covers a set Seattle is not in.
+
+### Why registration still runs through the web API
+
+The app does not reimplement the booking flow. It bridges into the same CUI this doc describes:
+
+```
+GET  portal/customers/anetcuicookies      # mint web-session cookies from the mobile token
+GET  portal/customers/passportv4cookies
+GET  portal/products/embedCuiUrl          # URL to open in a webview
+GET  portal/resource/url/cui
+```
+
+So the catalog-and-registration half **is** the `anc.apm.activecommunities.com` stack, wrapped in
+a webview and handed cookies. The native `/portal/*` layer sits alongside it for engagement
+features. Facility browse is the one native exception (`portal/products`, `portal/products/{id}`,
+`portal/centers/list`, `portal/products/equipments/available`) — and it is thinner than
+`reservation/resource`.
+
+### Conclusion
+
+Decompiling the app yields **no new public-data endpoints for Seattle**, for three independent
+reasons, any one of which is fatal:
+
+1. Seattle has not licensed Captivate — its org is not served by this backend.
+2. The entire `/portal/*` surface requires OAuth; nothing is cookieless.
+3. The mobile-only endpoints are account-scoped engagement features, not catalog data. The
+   catalog itself is the web API in a webview.
+
+The web `/{tenant}/rest/` API documented above remains the complete and correct target.
+
+### Reproducing the teardown
+
+```bash
+brew install jadx apktool
+curl -L -A "okhttp/4.12.0" -H "Referer: https://apkpure.com/" \
+  -o captivate.apk "https://d.apkpure.net/b/APK/com.active.link?version=latest"
+jadx -d out captivate.apk
+
+# Endpoint inventory. Retrofit annotations are R8-renamed: Gd.f=GET, Gd.o=POST,
+# Gd.p=PUT, Gd.b=DELETE, Gd.s=@Path, Gd.t=@Query
+grep -rhoE '@[a-z]\("[^"]+"\)' out/sources | grep -E '"/?(portal|rest|authorization-server)/' | sort -u
+
+# The four base URLs resolve in one config class
+grep -rn 'return "https://' out/sources/C7/b.java
+```
+
+Verified against `com.active.link` versionName 3.37.0 (versionCode 124).
 
 ## Implications for the worker
 
