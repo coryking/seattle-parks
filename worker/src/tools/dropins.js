@@ -12,7 +12,7 @@ import { z } from "zod";
 import { TZ_NOTE } from "../constants.js";
 import { upstreamGet, upstreamPost } from "../upstream.js";
 import { orgParam, orgOrError } from "../orgs.js";
-import { decodeEntities, resolveFacet, flattenDropins, filterDropins } from "../lib.js";
+import { decodeEntities, resolveFacet, flattenDropins, filterDropins, renderDropinsMarkdown } from "../lib.js";
 
 async function eventsForCalendar(org, cal) {
   const filt = await upstreamPost(org, "onlinecalendar/filters?locale=en-US", { calendar_id: cal.id });
@@ -68,23 +68,23 @@ async function handler(a) {
   }
   const sessions = filterDropins(all, { ...a, date_from, date_to });
 
-  return {
-    org,
-    sessions_count: sessions.length,
-    sessions_in_window: all.length,
-    window_covered: window,
-    window_note: "Upstream returns a fixed rolling window (~5 weeks ahead); dates outside it are not queryable, by anyone. Date filtering is applied worker-side.",
-    query: {
-      calendars: cals.map((c) => c.name),
-      centers: a.centers || [],
+  notes.push(`Upstream publishes only a rolling ~5-week window; dates outside it are not queryable, by anyone. ${TZ_NOTE}`);
+  const queryParts = [`calendars=${cals.map((c) => c.name).join(",")}`];
+  if (a.centers?.length) queryParts.push(`centers=${a.centers.join(",")}`);
+  if (a.keyword) queryParts.push(`keyword=${a.keyword}`);
+
+  return renderDropinsMarkdown(
+    {
+      org,
       date_from,
       date_to,
-      keyword: a.keyword || null,
+      window_from: window?.from,
+      window_to: window?.to,
+      query_line: queryParts.join(" · "),
+      notes,
     },
-    notes,
-    tz: TZ_NOTE,
-    sessions,
-  };
+    sessions
+  );
 }
 
 export default {
@@ -92,7 +92,7 @@ export default {
   config: {
     title: "Search drop-in sessions (dated calendar)",
     description:
-      `List dated drop-in sessions (open swim, open gym, tot time, senior programs…) across an org's community centers — concrete occurrences with date, start/end time, center, and facility. This is a separate catalog from registered programs: no enrollment, just show up. Upstream only publishes a rolling ~5-week window; the response states the window covered, and dates outside it are not queryable at all. Filters (dates, keyword, centers) are applied worker-side and echoed back.`,
+      `List dated drop-in sessions (open swim, open gym, tot time, senior programs…) across an org's community centers, as a compact markdown digest grouped by date ("##" per day) with one pipe-row per session — columns: start-end | title | center | facility. This is a separate catalog from registered programs: no enrollment, just show up. Defaults to the next 7 days; upstream only publishes a rolling ~5-week window (the header states both), and dates outside it are not queryable at all. Filters (dates, keyword, centers) are applied worker-side and echoed in the header.`,
     inputSchema: {
       calendars: z.array(z.string()).optional().describe(`Calendar names to include, resolved fuzzily — Seattle has: Adult, Multiple-Ages, Senior, Swimming, Tot, Tween/Teen, Youth. Omit for all.`),
       centers: z.array(z.string()).optional().describe(`Community-center name fragments to keep, e.g. ["Green Lake"]. Substring match, worker-side.`),

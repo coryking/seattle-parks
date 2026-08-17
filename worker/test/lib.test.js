@@ -3,9 +3,10 @@ import {
   decodeEntities, stripHtml, truncate,
   parseClock, parseTimeRange, parseWeekdays,
   statusOf, agesLabel, coversAny, shapeSection, filterSections, groupPrograms,
-  resolveFacet, resolveOrg, resolveSeason, localStamp,
+  resolveFacet, resolveOrg, resolveSeason, localStamp, closeStamp,
   shapeScheduleAndWindow, shapeButtonStatus, shapePrice,
   flattenDropins, filterDropins,
+  sanitizeCell, renderProgramsMarkdown, renderDropinsMarkdown,
 } from "../src/lib.js";
 
 // Real captured payloads (probed live 2026-08-16; see docs/activenet-api.md).
@@ -186,8 +187,13 @@ describe("detail-tier synthesis (real captured payloads)", () => {
     const sw = shapeScheduleAndWindow(RAW_MRD);
     expect(sw.schedule[0].meets[0]).toEqual({ days: ["Sun"], start: "12:30", end: "13:30" });
     expect(sw.window).toEqual({
-      opens: "2026-08-11T12:00", opens_members: "2026-08-04T12:00", closes: "2026-11-01T00:00",
+      opens: "2026-08-11T12:00", opens_members: "2026-08-04T12:00", closes: "2026-11-01T23:59",
     });
+  });
+  it("midnight closes mean end-of-day (upstream renders 00:00:00 as 11:59 PM — activity 84194)", () => {
+    expect(closeStamp("2026-08-13 00:00:00")).toBe("2026-08-13T23:59");
+    expect(closeStamp("2026-08-13 14:00:00")).toBe("2026-08-13T14:00"); // real intra-day close passes through
+    expect(closeStamp(null)).toBeNull();
   });
   it("buttonstatus verdicts, both directions", () => {
     expect(shapeButtonStatus(BTN_OPEN)).toMatchObject({ enrollable_now: true, enroll_url: "https://x/enroll/89410", reason: null });
@@ -203,6 +209,47 @@ describe("detail-tier synthesis (real captured payloads)", () => {
   it("localStamp normalizes upstream datetimes", () => {
     expect(localStamp("2026-08-11 12:00:00")).toBe("2026-08-11T12:00");
     expect(localStamp("")).toBeNull();
+  });
+});
+
+describe("markdown rendering (skim tiers)", () => {
+  it("sanitizes cells: pipes and newlines", () => {
+    expect(sanitizeCell("A | B\nC")).toBe("A / B C");
+  });
+  it("renders programs: header, legend, one pipe-row per section", () => {
+    const programs = groupPrograms([
+      shapeSection(RAW_ITEM),
+      shapeSection({ ...RAW_ITEM, id: 2, total_open: 0 }),
+      shapeSection({ ...RAW_ITEM, id: 3, total_open: -1, name: "Open | Swim" }),
+    ]);
+    const md = renderProgramsMarkdown(
+      { org: "seattle", sections_count: 3, query_line: "keyword=swim · season=Fall 2026 (52)", notes: ["Season note"], next_step: "drill next" },
+      programs
+    );
+    expect(md).toMatch(/^# seattle: 2 programs \/ 3 sections\n/);
+    expect(md).toContain("query: keyword=swim");
+    expect(md).toContain("note: Season note");
+    expect(md).toContain("sections format: id | days | time | dates | spots");
+    expect(md).toContain("## Dual Lane Aqua Run Event 12:30 — Evans Pool (ages 6+)");
+    expect(md).toContain("89410 | Sun | 12:30-13:30 | 2026-11-01..2026-11-01 | 90 open");
+    expect(md).toContain("| full");
+    expect(md).toContain("| drop-in");
+    expect(md).toContain("## Open / Swim"); // pipe sanitized out of the heading
+    expect(md).not.toContain("[object Object]");
+  });
+  it("renders dropins grouped by date with weekday labels", () => {
+    const sessions = [
+      { date: "2026-08-22", start: "09:00", end: "10:30", title: "Lap Swim", center: "Green Lake CC", facilities: ["Pool"] },
+      { date: "2026-08-22", start: "18:00", end: "20:00", title: "Open Gym", center: "Rainier CC", facilities: [] },
+    ];
+    const md = renderDropinsMarkdown(
+      { org: "seattle", date_from: "2026-08-16", date_to: "2026-08-23", window_from: "2026-08-10", window_to: "2026-09-19", query_line: "keyword=swim", notes: ["defaulted note"] },
+      sessions
+    );
+    expect(md).toMatch(/^# seattle drop-ins: 2 sessions, 2026-08-16\.\.2026-08-23 \(upstream window 2026-08-10\.\.2026-09-19\)\n/);
+    expect(md).toContain("## 2026-08-22 (Sat)");
+    expect(md).toContain("09:00-10:30 | Lap Swim | Green Lake CC | Pool");
+    expect(md).toContain("18:00-20:00 | Open Gym | Rainier CC | -");
   });
 });
 

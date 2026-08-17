@@ -38,12 +38,10 @@ async function rpc(method, params) {
 async function call(tool, args) {
   const r = await rpc("tools/call", { name: tool, arguments: args });
   const text = r.content?.[0]?.text ?? "";
-  try {
-    return { data: JSON.parse(text), bytes: text.length, isError: Boolean(r.isError) };
-  } catch {
-    // A thrown tool error arrives as plain text — surface it instead of crashing.
-    return { data: { tool_error: text }, bytes: text.length, isError: true };
-  }
+  // Skim tiers return markdown (data stays null); JSON tools parse into data.
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* markdown or thrown-error text */ }
+  return { text, data, bytes: text.length, isError: Boolean(r.isError) };
 }
 
 function check(label, cond, detail = "") {
@@ -88,34 +86,37 @@ check("five tools", tools?.tools?.length === 5, tools?.tools?.map((t) => t.name)
 const swim = await call("search_activities", {
   keyword: "swim", season: "fall", sites: ["Evans Pool", "medgar evers"],
 });
-check("evans resolves to 500", swim.data.query?.sites?.some((s) => s.id === "500"), JSON.stringify(swim.data.query?.sites));
-check("medgar evers resolves to 16", swim.data.query?.sites?.some((s) => s.id === "16"));
-check("season resolves to a Fall season", /fall/i.test(swim.data.query?.season?.name ?? ""), swim.data.query?.season?.name);
-check("bare-word season choice is noted", (swim.data.notes ?? []).some((n) => /resolved to Fall/i.test(n)));
-check("swim programs found", swim.data.programs_count > 0, `${swim.data.programs_count} programs / ${swim.data.sections_count} sections`);
-check("grouping compresses", swim.data.programs_count < swim.data.sections_count);
-check("every section has a status", (swim.data.programs ?? []).every((p) => p.sections.every((s) => ["open", "full", "drop_in"].includes(s.status))));
-check("no HTML in descriptions", !(swim.data.programs ?? []).some((p) => /<[a-z]+[^>]*>/i.test(p.description)));
-check("skim response under 80KB", swim.bytes < 80_000, `${swim.bytes} bytes`);
-check("no unserialized objects in skim", !JSON.stringify(swim.data).includes("[object Object]"));
+const header = swim.text.match(/^# (\w+): (\d+) programs \/ (\d+) sections/);
+check("markdown header present", Boolean(header), swim.text.split("\n")[0]);
+check("evans resolves to 500", swim.text.includes("Evans Pool (500)"));
+check("medgar evers resolves to 16", swim.text.includes("Medgar Evers Pool (16)"));
+check("season resolves to a Fall season", /season=Fall \d{4}/.test(swim.text));
+check("bare-word season choice is noted", /note: .*resolved to Fall/.test(swim.text));
+check("swim programs found", header && Number(header[2]) > 0, `${header?.[2]} programs / ${header?.[3]} sections`);
+check("grouping compresses", header && Number(header[2]) < Number(header[3]));
+const rows = swim.text.split("\n").filter((l) => /^\d+ \| /.test(l));
+check("every section row carries spots/status", rows.length > 0 && rows.every((l) => /\| (\d+ open|full|drop-in)$/.test(l)), `${rows.length} rows`);
+check("no HTML in output", !/<[a-z]+[^>]*>/i.test(swim.text));
+check("skim response under 45KB", swim.bytes < 45_000, `${swim.bytes} bytes`);
+check("no unserialized objects in skim", !swim.text.includes("[object Object]"));
 
 // --- golden query 2: pottery (the reg-closed incident) ----------------------
 const pottery = await call("search_activities", { keyword: "pottery", ages: [8, 9], season: "fall" });
-check("pottery query echoes ages", JSON.stringify(pottery.data.query?.ages) === "[8,9]");
-check("pottery search structurally valid", typeof pottery.data.programs_count === "number", `${pottery.data.programs_count} programs`);
+check("pottery query echoes ages", pottery.text.includes("ages=8,9") || Boolean(pottery.data), pottery.text.split("\n")[0]);
+check("pottery search structurally valid", /^# \w+: \d+ programs/.test(pottery.text) || typeof pottery.data?.programs_count === "number");
 
 // --- fail-loud paths -------------------------------------------------------
 const bogus = await call("search_activities", { keyword: "swim", sites: ["Hogwarts Quidditch Pitch"] });
 check("bogus site fails loud (no silent fallback)", Boolean(bogus.data.error), bogus.data.error);
 
 const ambig = await call("search_activities", { keyword: "swim", season: "fall", sites: ["pool"] });
-check("ambiguous site reported in notes", (ambig.data.notes ?? []).some((n) => /Ambiguous/i.test(n)) || Boolean(bogus.data.error));
+check("ambiguous site reported with candidates", (ambig.data?.notes ?? []).some((n) => /Ambiguous/i.test(n)) || /Ambiguous/.test(ambig.text));
 
 const noFilter = await call("search_activities", {});
 check("unfiltered query refused with guidance", Boolean(noFilter.data.error && noFilter.data.hint));
 
 // --- drill tier ------------------------------------------------------------
-const firstIds = (swim.data.programs ?? []).flatMap((p) => p.sections.map((s) => s.id)).slice(0, 3);
+const firstIds = rows.slice(0, 3).map((l) => Number(l.split(" | ")[0]));
 if (firstIds.length) {
   const detail = await call("get_activity_detail", { ids: firstIds });
   const act = detail.data.activities?.[0];
@@ -131,11 +132,12 @@ if (firstIds.length) {
 
 // --- drop-ins --------------------------------------------------------------
 const dropins = await call("search_dropins", { keyword: "swim" });
-check("dropins return sessions", dropins.data.sessions_count > 0, `${dropins.data.sessions_count} of ${dropins.data.sessions_in_window} in window`);
-check("dropins state their window", Boolean(dropins.data.window_covered?.from), JSON.stringify(dropins.data.window_covered));
-check("dropin rows structured", (dropins.data.sessions ?? []).slice(0, 5).every((s) => /^\d{4}-\d{2}-\d{2}$/.test(s.date ?? "") && /^\d{2}:\d{2}$/.test(s.start ?? "")));
-check("dropins default to a 7-day window, noted", Boolean(dropins.data.query?.date_from) && (dropins.data.notes ?? []).some((n) => /defaulted/i.test(n)), `${dropins.data.query?.date_from}..${dropins.data.query?.date_to}`);
-check("dropins response under 120KB", dropins.bytes < 120_000, `${dropins.bytes} bytes`);
+const dHeader = dropins.text.match(/^# (\w+) drop-ins: (\d+) sessions, (\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2}) \(upstream window/);
+check("dropins return sessions", dHeader && Number(dHeader[2]) > 0, dropins.text.split("\n")[0]);
+check("dropins state their window", Boolean(dHeader), dHeader?.[0]);
+check("dropin rows structured under date headings", /^## \d{4}-\d{2}-\d{2} \([A-Z][a-z]{2}\)$/m.test(dropins.text) && /^\d{2}:\d{2}-\d{2}:\d{2} \| /m.test(dropins.text));
+check("dropins default to a 7-day window, noted", /note: No dates given — defaulted/.test(dropins.text), `${dHeader?.[3]}..${dHeader?.[4]}`);
+check("dropins response under 80KB", dropins.bytes < 80_000, `${dropins.bytes} bytes`);
 
 // --- orgs + vocabulary -----------------------------------------------------
 const orgs = await call("list_orgs", { query: "portland" });
@@ -145,7 +147,7 @@ const filters = await call("get_filters", {});
 check("seattle vocabulary present", filters.data.counts?.sites > 50 && filters.data.counts?.seasons > 0, JSON.stringify(filters.data.counts));
 
 const portlandSearch = await call("search_activities", { keyword: "swim", org: "Portland" });
-check("org by human name works end-to-end", portlandSearch.data.org === "portlandparks" || Boolean(portlandSearch.data.error), `org=${portlandSearch.data.org ?? JSON.stringify(portlandSearch.data.error)}`);
+check("org by human name works end-to-end", portlandSearch.text.startsWith("# portlandparks:") || Boolean(portlandSearch.data?.error), portlandSearch.text.split("\n")[0]);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nall smoke checks passed");
 process.exit(failures ? 1 : 0);

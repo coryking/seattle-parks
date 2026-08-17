@@ -20,9 +20,13 @@ export function createServer() {
     { instructions: SERVER_INSTRUCTIONS }
   );
   for (const tool of TOOLS) {
-    server.registerTool(tool.name, tool.config, async (args) => ({
-      content: [{ type: "text", text: JSON.stringify(await tool.handler(args ?? {})) }],
-    }));
+    server.registerTool(tool.name, tool.config, async (args) => {
+      // Skim-tier handlers return compact markdown strings; the rest return
+      // objects that get the JSON envelope.
+      const result = await tool.handler(args ?? {});
+      const text = typeof result === "string" ? result : JSON.stringify(result);
+      return { content: [{ type: "text", text }] };
+    });
   }
   return server;
 }

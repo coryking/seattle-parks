@@ -8,7 +8,7 @@ import { z } from "zod";
 import { DEFAULT_ORG, MAX_PAGES, TOO_BROAD, MAX_DETAIL_IDS, TZ_NOTE } from "../constants.js";
 import { upstreamPost, getVocabulary, publicDetailUrl } from "../upstream.js";
 import { orgParam, orgOrError } from "../orgs.js";
-import { decodeEntities, shapeSection, filterSections, groupPrograms, resolveFacet, resolveSeason } from "../lib.js";
+import { decodeEntities, shapeSection, filterSections, groupPrograms, resolveFacet, resolveSeason, renderProgramsMarkdown } from "../lib.js";
 
 /**
  * Resolve one user-supplied facet list; collects human-readable problems into
@@ -39,6 +39,20 @@ function echoQuery(org, a, sites, seasons) {
     start_after: a.start_after || null,
     end_before: a.end_before || null,
   };
+}
+
+/** The resolved query as one compact header line — the loud echo, cheaply. */
+function queryLine(a, sites, cats, seasons) {
+  const parts = [];
+  if (a.keyword) parts.push(`keyword=${a.keyword}`);
+  if (seasons.resolved[0]) parts.push(`season=${seasons.resolved[0].name} (${seasons.resolved[0].id})`);
+  if (sites.resolved.length) parts.push(`sites=${sites.resolved.map((s) => `${s.name} (${s.id})`).join(", ")}`);
+  if (cats.resolved.length) parts.push(`categories=${cats.resolved.map((c) => c.name).join(", ")}`);
+  if (a.ages?.length) parts.push(`ages=${a.ages.join(",")}`);
+  if (a.weekdays?.length) parts.push(`weekdays=${a.weekdays.join(",")}`);
+  if (a.date_after || a.date_before) parts.push(`dates=${a.date_after ?? ""}..${a.date_before ?? ""}`);
+  if (a.start_after || a.end_before) parts.push(`times=${a.start_after ?? ""}..${a.end_before ?? ""}`);
+  return parts.join(" · ");
 }
 
 function buildSearchBody(a, sites, cats, seasons) {
@@ -120,18 +134,16 @@ async function handler(a) {
   });
   const programs = groupPrograms(sections);
 
-  return {
-    org,
-    query: echoQuery(org, a, sites, seasons),
-    programs_count: programs.length,
-    sections_count: sections.length,
-    sections_upstream: total,
-    notes,
-    detail_url_template: publicDetailUrl(org, "{id}"),
-    next_step: `Before presenting choices to the user, call get_activity_detail with the section ids they care about (max ${MAX_DETAIL_IDS}) — it returns the registration window, whether sign-up is possible right now, and price.`,
-    tz: TZ_NOTE,
-    programs,
-  };
+  return renderProgramsMarkdown(
+    {
+      org,
+      sections_count: sections.length,
+      query_line: queryLine(a, sites, cats, seasons),
+      notes,
+      next_step: `Before presenting choices to the user, call get_activity_detail with the section ids they care about (max ${MAX_DETAIL_IDS}) — registration window, enrollability, and price live there. ${TZ_NOTE} Detail pages: ${publicDetailUrl(org, "{id}")}`,
+    },
+    programs
+  );
 }
 
 export default {
@@ -139,7 +151,7 @@ export default {
   config: {
     title: "Search recreation programs (grouped summaries)",
     description:
-      `Search an ActiveCommunities org's registered-program catalog (camps, classes, lessons) and return compact program summaries — sections grouped by program name and location, descriptions truncated, one row per section with days/time/dates/spots/status (open|full|drop_in). This is the cheap discovery tier: results deliberately EXCLUDE the registration window, enrollability, and price — before presenting specific options to the user, pass their section ids to get_activity_detail (open spots alone does not mean sign-up is currently possible). Accepts human names for sites and season ("Evans Pool", "fall") and resolves them, reporting anything unmatched or ambiguous in "notes". Requires at least one filter. Does not cover drop-in sessions (use search_dropins). Default org: ${DEFAULT_ORG}.`,
+      `Search an ActiveCommunities org's registered-program catalog (camps, classes, lessons) and return a compact markdown digest: a header with counts, the resolved query, and "note:" warnings, then one "##" block per program (sections grouped by name+location) with one pipe-row per section — columns: id | days | time | dates | spots (spots cell reads "N open", "full", or "drop-in"). This is the cheap discovery tier: results deliberately EXCLUDE the registration window, enrollability, and price — before presenting specific options to the user, pass their section ids to get_activity_detail (open spots alone does not mean sign-up is currently possible). Accepts human names for sites and season ("Evans Pool", "fall") and resolves them, reporting anything unmatched or ambiguous in "note:" lines. Requires at least one filter. Does not cover drop-in sessions (use search_dropins). Default org: ${DEFAULT_ORG}.`,
     inputSchema: {
       keyword: z.string().optional().describe(`Free-text match on program names/descriptions, e.g. "swim", "pottery", "camp".`),
       ages: z.array(z.number().int().min(0).max(120)).optional().describe(`Actual ages (years) of the participant(s); keeps programs whose age band covers ANY listed age. E.g. [8] for an 8-year-old.`),
