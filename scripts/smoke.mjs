@@ -97,6 +97,7 @@ check("grouping compresses", swim.data.programs_count < swim.data.sections_count
 check("every section has a status", (swim.data.programs ?? []).every((p) => p.sections.every((s) => ["open", "full", "drop_in"].includes(s.status))));
 check("no HTML in descriptions", !(swim.data.programs ?? []).some((p) => /<[a-z]+[^>]*>/i.test(p.description)));
 check("skim response under 80KB", swim.bytes < 80_000, `${swim.bytes} bytes`);
+check("no unserialized objects in skim", !JSON.stringify(swim.data).includes("[object Object]"));
 
 // --- golden query 2: pottery (the reg-closed incident) ----------------------
 const pottery = await call("search_activities", { keyword: "pottery", ages: [8, 9], season: "fall" });
@@ -123,6 +124,7 @@ if (firstIds.length) {
   check("dossier has registration window", act?.registration?.window && "opens" in act.registration.window, JSON.stringify(act?.registration?.window));
   check("dossier has price", act?.price && ("resident_fee" in act.price), JSON.stringify(act?.price));
   check("dossier has structured schedule", Array.isArray(act?.schedule));
+  check("no unserialized objects anywhere in dossiers", !JSON.stringify(detail.data).includes("[object Object]"));
 } else {
   check("drill tier smoke (skipped — no swim sections found)", false);
 }

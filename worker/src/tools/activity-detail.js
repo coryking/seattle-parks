@@ -37,7 +37,8 @@ async function fetchDossier(org, id) {
       decodeEntities(d.location_description || "") ||
       null,
     description: truncate(stripHtml(d.catalog_description || ""), 800),
-    notes: stripHtml([d.online_notes, d.other_info].filter(Boolean).join(" ")) || null,
+    notes: stripHtml(d.online_notes || "") || null,
+    sessions: d.other_info?.sessions ?? null,
     dates: { first: d.first_date || null, last: d.last_date || null },
     schedule: sw.schedule,
     registration: {
