@@ -3,7 +3,7 @@
 Search recreation catalogs on the ActiveCommunities (ActiveNet) platform — Seattle Parks &
 Rec by default, ~100 other cities/districts via an `org` parameter — as MCP tools: program
 search with age/season/site filters, drop-in session calendars, registration windows and
-"can I actually sign up right now" verdicts, and resident prices.
+"can I actually sign up right now" verdicts, and prices (with raw fee tiers when no single fee applies).
 
 The platform's own API is POST-only, page-shaped for its web UI, and undocumented
 (reverse-engineered reference: [`docs/activenet-api.md`](docs/activenet-api.md)). This

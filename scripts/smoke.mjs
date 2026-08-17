@@ -123,7 +123,8 @@ if (firstIds.length) {
   check("detail returns dossiers", detail.data.count === firstIds.length);
   check("dossier has registration verdict", typeof act?.registration?.enrollable_now === "boolean", `enrollable_now=${act?.registration?.enrollable_now} reason=${act?.registration?.reason ?? "-"}`);
   check("dossier has registration window", act?.registration?.window && "opens" in act.registration.window, JSON.stringify(act?.registration?.window));
-  check("dossier has price", act?.price && ("resident_fee" in act.price), JSON.stringify(act?.price));
+  check("dossier price is total: fee, free, tiers, or an explicit note", act?.price && "fee" in act.price && (act.price.fee !== null || act.price.free === true || Array.isArray(act.price.tiers) || Boolean(act.price.fee_note)), JSON.stringify(act?.price));
+  check("no mislabeled fee: tiers ride along whenever they exist", detail.data.activities.every((a2) => !a2.price?.fee_label || Array.isArray(a2.price?.tiers)));
   check("dossier has structured schedule", Array.isArray(act?.schedule));
   check("no unserialized objects anywhere in dossiers", !JSON.stringify(detail.data).includes("[object Object]"));
 } else {

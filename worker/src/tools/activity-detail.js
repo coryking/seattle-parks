@@ -69,7 +69,7 @@ export default {
   config: {
     title: "Get full activity details (registration, schedule, price)",
     description:
-      `Fetch the drill-tier dossier for specific activity sections by id (from search_activities): full description, structured meeting schedule with exception dates, the registration window (opens/closes timestamps), an authoritative enrollable-right-now verdict with the upstream reason when sign-up is not possible (e.g. online registration closed, phone-only), resident price, and enroll/detail links. Call this for the user's shortlist BEFORE presenting options — it is the only tier that knows whether the sign-up button actually works. Max ${MAX_DETAIL_IDS} ids per call (each id costs 4 upstream requests); batch the shortlist, never a whole result set.`,
+      `Fetch the drill-tier dossier for specific activity sections by id (from search_activities): full description, structured meeting schedule with exception dates, the registration window (opens/closes timestamps), an authoritative enrollable-right-now verdict with the upstream reason when sign-up is not possible (e.g. online registration closed, phone-only), price (a single fee when one clearly applies, otherwise the raw fee tiers — match tiers to the user's membership/residency yourself), and enroll/detail links. Call this for the user's shortlist BEFORE presenting options — it is the only tier that knows whether the sign-up button actually works. Max ${MAX_DETAIL_IDS} ids per call (each id costs 4 upstream requests); batch the shortlist, never a whole result set.`,
     inputSchema: {
       ids: z.array(z.number().int()).min(1).max(MAX_DETAIL_IDS).describe(`Section ids from search_activities results. 1–${MAX_DETAIL_IDS}.`),
       org: orgParam,

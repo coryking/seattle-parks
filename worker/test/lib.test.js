@@ -201,10 +201,31 @@ describe("detail-tier synthesis (real captured payloads)", () => {
     expect(closed.enrollable_now).toBe(false);
     expect(closed.reason).toMatch(/online registration is not allowed/);
   });
-  it("prices: free, flat, tiered-resident", () => {
-    expect(shapePrice({ free: true })).toEqual({ free: true, resident_fee: "$0.00" });
-    expect(shapePrice({ estimate_price: "$91.50" }).resident_fee).toBe("$91.50");
-    expect(shapePrice({ prices: [{ details: [{ description: "Non-Resident", price: "$20" }, { description: "Resident", price: "$10" }] }] }).resident_fee).toBe("$10");
+  it("prices: free, flat, tiered-resident (tiers always ride along)", () => {
+    expect(shapePrice({ free: true })).toEqual({ free: true, fee: "$0.00" });
+    expect(shapePrice({ estimate_price: "$91.50" }).fee).toBe("$91.50");
+    const r = shapePrice({ prices: [{ details: [{ description: "Non-Resident", price: "$20" }, { description: "Resident", price: "$10" }] }] });
+    expect(r.fee).toBe("$10");
+    expect(r.fee_label).toBe("Resident");
+    expect(r.tiers).toHaveLength(2);
+  });
+  it("prices: unrecognized tier scheme yields fee:null + raw tiers, never a guess (activity 88865)", () => {
+    // Real captured payload — the member/non-member scholarship scheme that
+    // shapePrice used to mislabel as a $42 "resident_fee" (real price $84).
+    const r = shapePrice({
+      estimate_price: "",
+      free: false,
+      prices: [{ details: [
+        { price: "$42.00", description: "Member of package:<br>Scholarship Eligible<br><br>" },
+        { price: "$84.00", description: "Non-member of package:<br>Scholarship Eligible<br><br>" },
+      ] }],
+    });
+    expect(r.fee).toBeNull();
+    expect(r.fee_note).toMatch(/no single fee/i);
+    expect(r.tiers).toEqual([
+      { label: "Member of package: Scholarship Eligible", price: "$42.00" },
+      { label: "Non-member of package: Scholarship Eligible", price: "$84.00" },
+    ]);
   });
   it("localStamp normalizes upstream datetimes", () => {
     expect(localStamp("2026-08-11 12:00:00")).toBe("2026-08-11T12:00");
